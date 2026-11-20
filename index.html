@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>🏡 家園能量中樞</title>
+  <script src="https://line-scdn.net"></script>
+  <style>
+    :root { --bg: #F8FAFC; --card: #FFFFFF; --pri: #0D9488; --ind: #4F46E5; --amb: #D97706; --red: #DC2626; --txt: #0F172A; --sub: #475569; }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Noto Sans TC", sans-serif; }
+    body { margin: 0; background: var(--bg); color: var(--txt); padding-bottom: 84px; font-size: 16px; line-height: 1.5; }
+    .topbar { background: #1E293B; color: #FDE68A; padding: 14px 16px; position: sticky; top: 0; z-index: 20; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
+    .topbar h1 { margin: 0; font-size: 19px; display: flex; justify-content: space-between; align-items: center; }
+    .stats-bar { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; font-size: 13px; font-weight: bold; }
+    .pill { background: #334155; color: #F8FAFC; padding: 3px 8px; border-radius: 99px; }
+    .nav { display: flex; overflow-x: auto; background: #FFFFFF; border-bottom: 1px solid #E2E8F0; position: sticky; top: 76px; z-index: 19; padding: 6px 8px; gap: 6px; }
+    .nav button { flex: 0 0 auto; border: none; background: #F1F5F9; color: var(--sub); padding: 8px 12px; border-radius: 10px; font-weight: bold; font-size: 14px; cursor: pointer; }
+    .nav button.active { background: var(--pri); color: #FFFFFF; }
+    .container { padding: 12px; max-width: 600px; margin: 0 auto; }
+    .card { background: var(--card); border-radius: 14px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(15,23,42,0.08); border: 1px solid #E2E8F0; }
+    .card-title { font-size: 17px; font-weight: bold; margin: 0 0 10px; color: #1E293B; display: flex; justify-content: space-between; align-items: center; }
+    .btn { display: block; width: 100%; border: none; border-radius: 10px; padding: 12px; font-size: 16px; font-weight: bold; color: #FFFFFF; background: var(--pri); cursor: pointer; text-align: center; margin-top: 8px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-ind { background: var(--ind); } .btn-amb { background: var(--amb); } .btn-red { background: var(--red); } .btn-slate { background: #475569; }
+    .chore-item { display: flex; align-items: center; justify-content: space-between; padding: 10px; border: 1.5px solid #CBD5E1; border-radius: 10px; margin-bottom: 8px; cursor: pointer; }
+    .chore-item.checked { border-color: var(--pri); background: #F0FDFA; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .slot-box { border: 1.5px solid #CBD5E1; border-radius: 10px; padding: 8px 4px; text-align: center; min-height: 92px; display: flex; flex-direction: column; justify-content: center; align-items: center; font-size: 13px; font-weight: bold; background: #FFFBEB; cursor: pointer; }
+    .slot-white { background: #475569; color: #FFFFFF; border-color: #334155; }
+    .slot-empty { background: #F1F5F9; color: #94A3B8; border-style: dashed; }
+    .tier-green { color: #059669; border-color: #059669; } .tier-blue { color: #0284C7; border-color: #0284C7; }
+    .tier-purple { color: #7C3AED; border-color: #7C3AED; } .tier-gold { color: #D97706; border-color: #D97706; }
+    .input-ctrl { width: 100%; padding: 10px; border: 1.5px solid #CBD5E1; border-radius: 10px; font-size: 16px; margin-top: 4px; }
+    .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #1E293B; color: #FEF08A; padding: 10px 18px; border-radius: 99px; font-weight: bold; font-size: 14px; z-index: 99; display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1><span id="hdrHomeName">🏡 家園能量中樞</span><span id="hdrLvTag" style="font-size:14px;color:#FFFFFF;">讀取中...</span></h1>
+    <div class="stats-bar" id="hdrStatsBar">
+      <span class="pill">❤️ HP --</span><span class="pill">💙 MP --</span><span class="pill">⚡ 精力 --</span><span class="pill">🪙 -- 金</span>
+    </div>
+  </div>
+  <div class="nav" id="mainNav">
+    <button data-tab="energy" class="active" onclick="switchTab('energy')">⚡ 注入能量</button>
+    <button data-tab="bag" onclick="switchTab('bag')">🎒 角色背包</button>
+    <button data-tab="shop" onclick="switchTab('shop')">🏪 補給商店</button>
+    <button data-tab="backdate" onclick="switchTab('backdate')">📝 暖心補登</button>
+    <button data-tab="audit" onclick="switchTab('audit')">🔍 見證清單</button>
+    <button data-tab="add_chore" onclick="switchTab('add_chore')">➕ 新增家事</button>
+    <button data-tab="admin" id="navAdminBtn" class="hidden" onclick="switchTab('admin')">⚙️ 管理設定</button>
+  </div>
+  <div class="container">
+    <div id="loadingBox" class="card" style="text-align:center;padding:30px;">⏳ 正在同步家園最新戰情...</div>
+    <div id="tab_energy" class="tab-pane hidden"></div>
+    <div id="tab_bag" class="tab-pane hidden"></div>
+    <div id="tab_shop" class="tab-pane hidden"></div>
+    <div id="tab_backdate" class="tab-pane hidden"></div>
+    <div id="tab_audit" class="tab-pane hidden"></div>
+    <div id="tab_add_chore" class="tab-pane hidden"></div>
+    <div id="tab_admin" class="tab-pane hidden"></div>
+  </div>
+  <div class="toast" id="toastMsg"></div>
