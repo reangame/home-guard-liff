@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>🏡 家園能量中樞</title>
-  <script src="https://line-scdn.net"></script>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
   <style>
     :root { --bg: #F8FAFC; --card: #FFFFFF; --pri: #0D9488; --ind: #4F46E5; --amb: #D97706; --red: #DC2626; --txt: #0F172A; --sub: #475569; }
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Noto Sans TC", sans-serif; }
@@ -61,4 +62,429 @@
     <div id="tab_add_chore" class="tab-pane hidden"></div>
     <div id="tab_admin" class="tab-pane hidden"></div>
   </div>
-  <div class="toast" id="toastMsg"></div>
+  <div id="toastMsg" class="toast"></div>
+
+    
+      <script>
+    // 定義全站共用狀態與已寫入最新環境參數之連線常數
+    const APP_CFG = {
+      LIFF_ID: '2012618458-DAaG1qzK',
+      GAS_URL: 'https://script.google.com/macros/s/AKfycbzlgsrUiXETYPgZVZqbRs7bfZv9EP2GiIssH8-5M9BUu69QPAiz4QwUWTb9v-kx2mWP/exec'
+    };
+    let STATE = { groupId: '', userId: '', data: null, checkedChores: {}, useAssassin: false };
+
+    // 【模組代碼】H-01｜前端 LIFF 網頁啟動指揮與前後端 API 通訊引擎｜全表
+    async function initLiffApp() {
+      // 【模組代碼】H-01-01｜顯示底部懸浮提示訊息｜無
+      window.showToast = function (msg) {
+        const el = document.getElementById('toastMsg');
+        el.textContent = msg;
+        el.style.display = 'block';
+        setTimeout(function () { el.style.display = 'none'; }, 3200);
+      };
+
+      // 【模組代碼】H-01-02｜切換目前顯示之功能分頁頁籤｜無
+      window.switchTab = function (tabName) {
+        document.querySelectorAll('.nav button').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === tabName); });
+        document.querySelectorAll('.tab-pane').forEach(function (p) { p.classList.add('hidden'); });
+        const target = document.getElementById('tab_' + tabName);
+        if (target) target.classList.remove('hidden');
+      };
+
+      // 【模組代碼】H-01-03｜向 GAS 後端發送 GET 初始化查詢並刷新全頁畫面｜全表
+      window.refreshAllData = async function () {
+        const url = APP_CFG.GAS_URL + '?api=init&groupId=' + encodeURIComponent(STATE.groupId) + '&userId=' + encodeURIComponent(STATE.userId);
+        const res = await fetch(url);
+        const json = await res.json();
+        document.getElementById('loadingBox').classList.add('hidden');
+        if (!json.ok) {
+          document.getElementById('loadingBox').classList.remove('hidden');
+          document.getElementById('loadingBox').textContent = '⚠️ ' + (json.msg || '讀取失敗');
+          return;
+        }
+        STATE.data = json;
+        renderTopBar();
+        renderEnergyTab();
+        renderBagAndCharacterTab();
+        renderShopAndBackdateTabs();
+        renderAuditChoreAndAdminTabs();
+      };
+
+      // 【模組代碼】H-01-04｜呼叫 GAS POST 寫入動作並自動透過 liff.sendMessages 代發單號換取免費 replyToken｜全表
+      window.callApiAction = async function (payload, autoClose) {
+        showToast('⏳ 處理中，請稍候...');
+        const reqBody = Object.assign({ groupId: STATE.groupId, userId: STATE.userId }, payload);
+        const res = await fetch(APP_CFG.GAS_URL + '?api=action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(reqBody)
+        });
+        const json = await res.json();
+        if (!json.ok && json.needExhaustedConfirm) {
+          if (confirm(json.msg)) return callApiAction(Object.assign({}, payload, { forceExhausted: true }), autoClose);
+          return null;
+        }
+        if (!json.ok) { showToast('⚠️ ' + (json.msg || '操作失敗')); return null; }
+        showToast(json.msg || '✅ 操作成功！');
+        if (json.receiptId && json.announceText && liff.isInClient()) {
+          try { await liff.sendMessages([{ type: 'text', text: json.announceText }]); } catch (err) { console.log('sendMessages:', err); }
+        }
+        if (autoClose && liff.isInClient()) { setTimeout(function () { liff.closeWindow(); }, 700); return json; }
+        await refreshAllData();
+        return json;
+      };
+
+      try {
+        const q = new URLSearchParams(window.location.search);
+        STATE.groupId = q.get('gid') || '';
+        const initTab = q.get('tab') || 'energy';
+        await liff.init({ liffId: APP_CFG.LIFF_ID });
+        if (!liff.isLoggedIn()) { liff.login(); return; }
+        const prof = await liff.getProfile();
+        STATE.userId = prof.userId;
+        const ctx = liff.getContext();
+        if (!STATE.groupId && ctx && ctx.groupId) STATE.groupId = ctx.groupId;
+        switchTab(initTab);
+        await refreshAllData();
+      } catch (e) {
+        document.getElementById('loadingBox').textContent = '⚠️ LIFF 啟動異常：' + e.message;
+      }
+    }
+
+            // 【模組代碼】H-02｜渲染頂部個人即時戰情列與「⚡ 我要注入能量」多選合併打卡頁籤｜家庭總控表、成員主檔表、家事百科表
+    function renderTopBar() {
+      const d = STATE.data;
+      const m = d.member;
+      const st = m.status || {};
+      const isMgr = (m.role === '設計者' || m.role === '管理者');
+      document.getElementById('navAdminBtn').classList.toggle('hidden', !isMgr);
+      document.getElementById('hdrHomeName').textContent = '🏡 ' + d.family.familyName;
+      document.getElementById('hdrLvTag').textContent = 'Lv.' + m.levelInfo.level + ' ' + (st.job || '見習守護者');
+      document.getElementById('hdrStatsBar').innerHTML =
+        '<span class="pill">❤️ HP ' + Math.floor(st.hp || 0) + '/100</span>' +
+        '<span class="pill">💙 MP ' + Math.floor(st.mp || 0) + '/100</span>' +
+        '<span class="pill">⚡ 精力 ' + Math.floor(st.stamina || 0) + '/100</span>' +
+        '<span class="pill">🪙 ' + (st.coins || 0) + ' 金</span>' +
+        '<span class="pill">🏛️ 公庫 ' + (d.family.battle_state.treasury_coins || 0) + '</span>';
+    }
+
+    // 【模組代碼】H-02B｜渲染多選家事勾選清單與刺客連斬開關（支援一次勾選多項合併結算）｜家事百科表
+    function renderEnergyTab() {
+      // 【模組代碼】H-02B-01｜切換單項家事勾選狀態並重繪預估總工時｜無
+      window.toggleChoreCheck = function (cName) {
+        if (STATE.checkedChores[cName]) delete STATE.checkedChores[cName];
+        else STATE.checkedChores[cName] = true;
+        renderEnergyTab();
+      };
+
+      const d = STATE.data;
+      const m = d.member;
+      const isAssassin = ((m.status.job || '').indexOf('刺客') !== -1);
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+      const usedAny = (m.status.anytime_date === todayStr) ? (m.status.anytime_count || 0) : 0;
+      const remAny = Math.max(0, 5 - usedAny);
+
+      const catGroups = {};
+      d.chores.forEach(function (c) {
+        if (c.freq !== '隨時' && c.status === '已完成') return;
+        if (!catGroups[c.cat]) catGroups[c.cat] = [];
+        catGroups[c.cat].push(c);
+      });
+
+      let html = '<div class="card"><div class="card-title"><span>⚡ 勾選已完成家事（可多選合併）</span><span style="font-size:13px;color:#0D9488;">本週 ' + m.weekMins + '/' + m.quota + '分</span></div>';
+      html += '<div style="font-size:13px;color:#475569;margin-bottom:10px;">✨ 隨時家事全類別共用掉寶剩餘：<b>' + remAny + ' / 5 次</b></div>';
+
+      let selCount = 0;
+      let selMins = 0;
+      Object.keys(catGroups).forEach(function (cat) {
+        html += '<div style="font-weight:bold;color:#0F766E;margin:10px 0 6px;">🏷️ ' + cat + '</div>';
+        catGroups[cat].forEach(function (c) {
+          const isChk = Boolean(STATE.checkedChores[c.name]);
+          if (isChk) { selCount++; selMins += c.mins; }
+          const icon = c.freq === '隨時' ? '✨' : '🔸';
+          html += '<div class="chore-item ' + (isChk ? 'checked' : '') + '" onclick="toggleChoreCheck(\'' + c.name.replace(/'/g, "\\'") + '\')">' +
+            '<span>' + (isChk ? '☑️ ' : '⬜ ') + icon + ' <b>' + c.name + '</b></span>' +
+            '<span style="color:#0D9488;font-weight:bold;">+' + c.mins + ' 分</span></div>';
+        });
+      });
+
+      if (isAssassin) {
+        const mpCost = d.balance.SKILL_MP_ASSASSIN || 20;
+        const multVal = d.balance.SKILL_VAL_ASSASSIN || 1.5;
+        html += '<label style="display:block;padding:10px;background:#FEF3C7;border-radius:10px;margin-top:8px;font-weight:bold;color:#92400E;">' +
+          '<input type="checkbox" ' + (STATE.useAssassin ? 'checked' : '') + ' onchange="STATE.useAssassin=this.checked"> ⚔️ 發動刺客奧義「暗影連斬」（消耗 ' + mpCost + ' MP，最高工時單項 ×' + multVal + ' 倍傷害）</label>';
+      }
+
+      html += '<button class="btn" ' + (selCount === 0 ? 'disabled' : '') + ' onclick="submitBatchChores()">⚔️ 確認注入能量（已選 ' + selCount + ' 項｜共 ' + selMins + ' 分鐘）</button></div>';
+      document.getElementById('tab_energy').innerHTML = html;
+    }
+
+    // 【模組代碼】H-03｜渲染角色穿戴、隨身背包/保管箱、Lv.10 職業轉職與熱更新大招頁籤｜成員主檔表、全服物品圖鑑表
+    function renderBagAndCharacterTab() {
+      const d = STATE.data;
+      const m = d.member;
+      const st = m.status;
+      const lv = m.levelInfo.level;
+      const bag = (m.inventory && m.inventory.bag) || [];
+      const eq = (m.inventory && m.inventory.equipped) || {};
+      const maxSlots = st.bag_slots || 6;
+
+      let html = '<div class="card"><div class="card-title"><span>🛡️ 守護者角色與轉職技能</span><span>' + m.levelInfo.title + '</span></div>';
+      if (Math.floor(st.hp || 0) < 50) {
+        html += '<button class="btn btn-red" onclick="callApiAction({action:\'sos_help\'}, true)">🆘 血量過低・發送群組求救討藥水</button>';
+      }
+      if (lv >= 10 && (!st.job || st.job === '見習守護者')) {
+        html += '<div style="background:#FAF5FF;border:1.5px solid #7C3AED;border-radius:10px;padding:10px;margin-top:8px;"><b>👑 恭喜達 Lv.10！請選擇您的專屬守護職業：</b>';
+        d.jobsCatalog.forEach(function (j) {
+          html += '<button class="btn btn-ind" style="margin-top:6px;font-size:14px;" onclick="if(confirm(\'確定轉職為【' + j.name + '】嗎？\')) callApiAction({action:\'job_change\',jobName:\'' + j.name + '\'}, true)">' + j.name + '（' + j.passive + '）</button>';
+        });
+        html += '</div>';
+      } else if (st.job && st.job !== '見習守護者') {
+        const myJob = d.jobsCatalog.find(function (j) { return j.name === st.job; });
+        if (myJob && myJob.targetType !== 'checkin_boost') {
+          html += '<button class="btn btn-amb" onclick="callApiAction({action:\'cast_skill\'}, true)">⚡ 施放職業奧義【' + myJob.skillName + '】（消耗 ' + myJob.mpCost + ' MP｜' + myJob.desc + '）</button>';
+        }
+      }
+
+      const eqKeys = Object.keys(eq);
+      html += '<div style="margin-top:10px;font-weight:bold;">⚔️ 已穿戴裝備（點擊卸下）：</div>';
+      html += eqKeys.length === 0 ? '<div style="color:#64748B;font-size:14px;">尚未穿戴任何裝備（Lv.10 轉職後可穿戴）</div>' :
+        eqKeys.map(function (slot) {
+          return '<div class="chore-item" onclick="callApiAction({action:\'unequip_item\',slot:\'' + slot + '\'}, false)"><span>🏷️ ' + slot + '：<b>' + eq[slot].name + '</b> (+' + (eq[slot].bonus || 0) + ')</span><span style="color:#DC2626;font-size:13px;">卸下</span></div>';
+        }).join('');
+
+      html += '<div style="margin-top:12px;font-weight:bold;">🎒 ' + (maxSlots >= 12 ? '隨身背包' : '隨身物品') + '（' + bag.length + ' / ' + maxSlots + ' 格，點擊使用或穿戴）：</div><div class="grid-3" style="margin-top:8px;">';
+      for (let i = 0; i < maxSlots; i++) {
+        const it = bag[i];
+        if (!it) { html += '<div class="slot-box slot-empty">空位</div>'; continue; }
+        const tierCls = (!it.tier || it.tier === 'white') ? 'slot-white' : ('tier-' + it.tier);
+        let clickJs = 'showToast(\'' + it.name + '（材料/收藏）\')';
+        if (it.type === 'consumable') {
+          if (it.mp > 0) clickJs = 'callApiAction({action:\'use_item\',itemType:\'mp\'}, false)';
+          else if (it.stamina > 0) clickJs = 'callApiAction({action:\'use_item\',itemType:\'stamina\'}, false)';
+          else clickJs = 'showToast(\'💊 治癒藥水僅限群組求救卡餵食救援夥伴喔！\')';
+        } else if (it.type === 'equip') {
+          clickJs = 'callApiAction({action:\'equip_item\',bagIdx:' + i + '}, false)';
+        }
+        html += '<div class="slot-box ' + tierCls + '" onclick="' + clickJs + '"><div>' + it.name + '</div><div style="margin-top:4px;">' + (it.type === 'equip' ? ('+' + (it.bonus || 0)) : ('x' + (it.qty || 1))) + '</div></div>';
+      }
+      html += '</div>';
+
+      if (lv >= 5 && maxSlots < 12) {
+        html += '<button class="btn btn-amb" onclick="callApiAction({action:\'buy_lv5_bag\'}, false)">🎒 購買 12 格正式背包（' + (d.balance.COST_BAG_LV5 || 150) + ' 金幣）</button>';
+      }
+      const pItems = (st.pending_loot && st.pending_loot.items) || [];
+      if (pItems.length > 0) {
+        html += '<div style="margin-top:10px;padding:10px;background:#FEF3C7;border-radius:10px;"><b>📦 暫時保管箱（' + pItems.length + ' 件戰利品，HP >= 40 可領）</b>' +
+          '<button class="btn" onclick="callApiAction({action:\'claim_loot\'}, false)">📦 一鍵領取保管箱戰利品</button></div>';
+      }
+      html += '</div>';
+      document.getElementById('tab_bag').innerHTML = html;
+    }
+
+// ====================================================================
+// 【index.html 最後收尾段（第 4A 段：多選送出、商店、暖心補登）】
+// 接續在 renderBagAndCharacterTab() 結束大括號之後貼上即可
+// ====================================================================
+
+    // 【模組代碼】H-02C｜送出多選家事合併打卡並關閉或刷新視窗｜家庭總控表、成員主檔表、家事百科表
+    async function submitBatchChores() {
+      const list = Object.keys(STATE.checkedChores);
+      if (list.length === 0) return;
+      const res = await callApiAction({
+        action: 'checkin_batch',
+        chores: list,
+        useAssassinSkill: Boolean(STATE.useAssassin)
+      }, true);
+      if (res && res.ok) {
+        STATE.checkedChores = {};
+        STATE.useAssassin = false;
+      }
+    }
+
+    // 【模組代碼】H-04｜渲染「🏪 補給商店」與「📝 暖心補登」功能分頁｜全服商店貨架表、全服物品圖鑑表、補登審核池
+    function renderShopAndBackdateTabs() {
+      const d = STATE.data;
+      const m = d.member;
+      const lv = m.levelInfo.level;
+      const coins = m.status.coins || 0;
+
+      // 1. 渲染補給商店分頁
+      let shopHtml = '<div class="card"><div class="card-title"><span>🏪 家園金幣補給商店</span><span style="color:#059669;">🪙 ' + coins + ' 金</span></div>';
+      shopHtml += '<div style="font-size:13px;color:#475569;margin-bottom:10px;">💡 治癒藥水僅限群組求救卡餵食救援夥伴，不可自己飲用喔！</div>';
+      d.shopShelf.forEach(function (item) {
+        const cat = d.itemCatalog.find(function (c) { return c.itemId === item.itemId; });
+        const desc = cat ? cat.desc : '';
+        const locked = lv < item.reqLevel;
+        shopHtml += '<div class="chore-item" style="flex-direction:column;align-items:stretch;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+          '<b>🛍️ ' + item.displayName + '</b>' +
+          '<span style="color:#D97706;font-weight:bold;">🪙 ' + item.price + ' 金</span></div>' +
+          '<div style="font-size:13px;color:#475569;margin:4px 0;">' + desc + '</div>' +
+          '<button class="btn" style="margin-top:4px;" ' + (locked ? 'disabled' : '') +
+          ' onclick="callApiAction({action:\'buy_item\',shelfId:\'' + item.shelfId + '\'}, false)">' +
+          (locked ? ('🔒 需 Lv.' + item.reqLevel + ' 解鎖') : '🛒 立即購買放入背包') + '</button></div>';
+      });
+      shopHtml += '</div>';
+      document.getElementById('tab_shop').innerHTML = shopHtml;
+
+      // 2. 渲染暖心補登分頁（含每日 3 次額度提示與日期時間選擇器）
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+      const usedBd = (m.status.backdate_date === todayStr) ? (m.status.backdate_count || 0) : 0;
+      const nowIso = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+      let bdHtml = '<div class="card"><div class="card-title"><span>📝 申請暖心補登</span><span style="font-size:13px;color:#D97706;">今日額度 ' + usedBd + '/3</span></div>';
+      bdHtml += '<div style="font-size:13px;color:#475569;margin-bottom:10px;">🌸 忘記即時打卡的家事可在此補登，經具見證權限夥伴蓋章後即執行完整戰鬥掉寶結算！</div>';
+      bdHtml += '<label style="font-weight:bold;">1️⃣ 選擇補登家事項目：</label><select id="bdChoreSel" class="input-ctrl">';
+      d.chores.forEach(function (c) {
+        bdHtml += '<option value="' + c.name + '">' + c.name + '（+' + c.mins + ' 分鐘｜' + c.freq + '）</option>';
+      });
+      bdHtml += '</select><label style="display:block;font-weight:bold;margin-top:10px;">2️⃣ 選擇實際完成日期與時間：</label>' +
+        '<input type="datetime-local" id="bdTimeInput" class="input-ctrl" value="' + nowIso + '" max="' + nowIso + '" />' +
+        '<button class="btn btn-amb" style="margin-top:12px;" ' + (usedBd >= 3 ? 'disabled' : '') +
+        ' onclick="submitBackdateForm()">🌸 送出暖心補登申請</button></div>';
+      document.getElementById('tab_backdate').innerHTML = bdHtml;
+    }
+
+    // 【模組代碼】H-04B｜送出暖心補登表單並發送群組見證卡片｜補登審核池
+    async function submitBackdateForm() {
+      const cName = document.getElementById('bdChoreSel').value;
+      const dtVal = document.getElementById('bdTimeInput').value;
+      if (!cName || !dtVal) { showToast('⚠️ 請完整選擇項目與時間喔！'); return; }
+      await callApiAction({ action: 'submit_backdate', choreName: cName, targetDateStr: dtVal }, true);
+    }
+
+// ====================================================================
+// 【index.html 最後收尾段（第 4B 段：見證蓋章、四段積木新增家事、管理者設定與啟動結尾）】
+// 接續在第 4A 段之後貼上至檔案最末端
+// ====================================================================
+
+    // 【模組代碼】H-05｜渲染「🔍 見證清單」、「➕ 新增家事」與「⚙️ 管理設定」頁籤｜補登審核池、家事百科表、家庭總控表、成員主檔表
+    function renderAuditChoreAndAdminTabs() {
+      const d = STATE.data;
+      const m = d.member;
+      const isMgr = (m.role === '設計者' || m.role === '管理者');
+      const isWitness = isMgr || (m.role === '有權限');
+
+      // 1. 渲染見證待審清單分頁
+      let audHtml = '<div class="card"><div class="card-title"><span>🔍 見證待審清單</span><span>共 ' + d.audits.length + ' 筆</span></div>';
+      if (d.audits.length === 0) {
+        audHtml += '<div style="text-align:center;color:#059669;padding:16px;font-weight:bold;">🎉 目前沒有等待見證的補登申請喔！</div>';
+      } else {
+        d.audits.forEach(function (a) {
+          audHtml += '<div class="chore-item" style="flex-direction:column;align-items:stretch;">' +
+            '<div>👤 <b>' + a.applicant + '</b> ｜ 🧺 <b>' + a.choreName + '</b>（+' + a.mins + '分）</div>' +
+            '<div style="font-size:13px;color:#475569;margin:4px 0;">📅 完成時間：' + a.actDate + '</div>' +
+            (isWitness
+              ? '<button class="btn" onclick="callApiAction({action:\'approve_backdate\',reqId:\'' + a.reqId + '\'}, true)">💗 感謝守護・一鍵蓋章</button>'
+              : '<div style="font-size:13px;color:#B45309;">🔒 需具見證權限的夥伴或管理者蓋章</div>') +
+            '</div>';
+        });
+      }
+      audHtml += '</div>';
+      document.getElementById('tab_audit').innerHTML = audHtml;
+
+      // 2. 渲染四段積木組合新增家事分頁
+      const cats = [];
+      d.chores.forEach(function (c) { if (cats.indexOf(c.cat) === -1) cats.push(c.cat); });
+      if (cats.length === 0) cats.push('廚房餐飲', '客廳樓梯', '浴廁陽台', '環境收運');
+      const freqs = ['隨時', '天天', '平日', '假日', '收運日', '每週', '雙週', '每月', '每季', '半年', '每年', '農曆年前'];
+
+      let addHtml = '<div class="card"><div class="card-title"><span>➕ 新增家事項目（四段積木引導）</span></div>';
+      addHtml += '<div style="font-size:13px;color:#475569;margin-bottom:8px;">💡 可點選下方積木快速組合，或直接修改名稱（限制 2～10 字）：</div>';
+      addHtml += '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;">' +
+        '<select id="bFloor" class="input-ctrl" onchange="syncChoreBlockName()"><option value="">樓層(略過)</option><option>1樓</option><option>2樓</option><option>3樓</option><option>4樓</option><option>頂樓</option><option>地下室</option></select>' +
+        '<select id="bArea" class="input-ctrl" onchange="syncChoreBlockName()"><option value="">區域(略過)</option><option>客廳</option><option>廚房</option><option>浴室</option><option>廁所</option><option>房間</option><option>陽台</option><option>大門</option></select>' +
+        '<select id="bItem" class="input-ctrl" onchange="syncChoreBlockName()"><option value="">項目(略過)</option><option>地板</option><option>桌面</option><option>窗戶</option><option>馬桶</option><option>流理台</option><option>衣物</option><option>垃圾</option></select>' +
+        '<select id="bAct" class="input-ctrl" onchange="syncChoreBlockName()"><option value="">動作(略過)</option><option>掃地</option><option>拖地</option><option>擦拭</option><option>整理</option><option>清潔</option><option>清洗</option><option>晾曬</option></select>' +
+        '</div>';
+      addHtml += '<label style="display:block;font-weight:bold;margin-top:10px;">1️⃣ 家事名稱（2～10 字）：</label><input id="newChoreName" class="input-ctrl" maxlength="10" placeholder="例如：客廳地板拖地" />';
+      addHtml += '<label style="display:block;font-weight:bold;margin-top:8px;">2️⃣ 預估工時（1～60 分鐘）：</label><input id="newChoreMins" type="number" class="input-ctrl" min="1" max="60" value="15" />';
+      addHtml += '<label style="display:block;font-weight:bold;margin-top:8px;">3️⃣ 執行頻率：</label><select id="newChoreFreq" class="input-ctrl">' +
+        freqs.map(function (f) { return '<option value="' + f + '">' + f + '</option>'; }).join('') + '</select>';
+      addHtml += '<label style="display:block;font-weight:bold;margin-top:8px;">4️⃣ 所屬分類（可選現有或選自訂）：</label><select id="newChoreCatSel" class="input-ctrl" onchange="document.getElementById(\'customCatWrap\').classList.toggle(\'hidden\', this.value!==\'__CUSTOM__\')">' +
+        cats.map(function (ct) { return '<option value="' + ct + '">' + ct + '</option>'; }).join('') +
+        '<option value="__CUSTOM__">✏️ 自訂新分類名稱...</option></select>';
+      addHtml += '<div id="customCatWrap" class="hidden" style="margin-top:6px;"><input id="newChoreCustomCat" class="input-ctrl" maxlength="8" placeholder="輸入新分類名稱（2～8 字）" /></div>';
+      addHtml += '<button class="btn" style="margin-top:12px;" onclick="submitNewChoreForm()">🎉 確認新增家事項目</button></div>';
+
+      // 加入個人休假快捷卡片於新增家事下方（所有角色皆可使用）
+      const onLeave = Boolean(m.status.on_leave);
+      addHtml += '<div class="card"><div class="card-title"><span>🌿 守護者個人休假狀態</span></div>' +
+        '<div style="font-size:14px;color:#475569;margin-bottom:8px;">' + (onLeave ? '您目前處於「個人休假模式」，免計低消與 Boss 分母。' : '出國、忙碌或身體休養時，可開啟個人休假模式（零壓力免扣分）。') + '</div>' +
+        (onLeave
+          ? '<button class="btn" onclick="callApiAction({action:\'leave_end\'}, true)">⚔️ 結束個人休假・重返守護</button>'
+          : '<button class="btn btn-ind" onclick="callApiAction({action:\'leave_apply\'}, true)">🌿 啟動個人休假模式</button>') +
+        '</div>';
+      document.getElementById('tab_add_chore').innerHTML = addHtml;
+
+      // 3. 渲染管理者設定中心分頁（僅管理者與設計者可見）
+      if (isMgr) {
+        const isFamVac = Boolean(d.family.battle_state.family_vacation);
+        const curTax = d.family.settings.treasury_tax_rate || 0.10;
+        let admHtml = '<div class="card"><div class="card-title"><span>⚙️ 管理者設定中心</span></div>';
+        admHtml += '<button class="btn ' + (isFamVac ? '' : 'btn-ind') + '" onclick="callApiAction({action:\'toggle_fam_vac\',enable:' + (!isFamVac) + '}, true)">' +
+          (isFamVac ? '⚔️ 解除本週全家休假模式' : '🏖️ 啟動本週全家休假模式') + '</button>';
+        admHtml += '<div style="margin-top:12px;font-weight:bold;">🏛️ 公庫提撥比率：</div><select id="admTaxSel" class="input-ctrl">';
+        [0.05, 0.10, 0.15, 0.20, 0.25, 0.30].forEach(function (r) {
+          admHtml += '<option value="' + r + '" ' + (Math.abs(curTax - r) < 0.001 ? 'selected' : '') + '>' + Math.round(r * 100) + '%</option>';
+        });
+        admHtml += '</select><div style="margin-top:12px;font-weight:bold;">👥 夥伴每週低消與經驗倍率：</div>';
+        d.members.forEach(function (pm) {
+          admHtml += '<div class="chore-item" style="flex-direction:column;align-items:stretch;">' +
+            '<b>👤 ' + pm.name + '（' + pm.job + '）</b>' +
+            '<div style="display:flex;gap:8px;margin-top:6px;">' +
+            '<div style="flex:1;"><small>低消(分)</small><input type="number" class="input-ctrl adm-q" data-uid="' + pm.userId + '" value="' + pm.quota + '" min="0" max="600" /></div>' +
+            '<div style="flex:1;"><small>經驗倍率</small><input type="number" step="0.1" class="input-ctrl adm-m" data-uid="' + pm.userId + '" value="' + pm.mult + '" min="0.5" max="2.5" /></div>' +
+            '</div></div>';
+        });
+        admHtml += '<button class="btn btn-amb" style="margin-top:10px;" onclick="submitAdminBatchSave()">✅ 儲存並套用全部規則設定</button></div>';
+        document.getElementById('tab_admin').innerHTML = admHtml;
+      }
+    }
+
+    // 【模組代碼】H-05B｜同步四段積木選單組合至家事名稱輸入框｜無
+    function syncChoreBlockName() {
+      const combined = (
+        document.getElementById('bFloor').value +
+        document.getElementById('bArea').value +
+        document.getElementById('bItem').value +
+        document.getElementById('bAct').value
+      ).slice(0, 10);
+      if (combined) document.getElementById('newChoreName').value = combined;
+    }
+
+    // 【模組代碼】H-05C｜送出新增家事項目表單｜家事百科表
+    async function submitNewChoreForm() {
+      const name = document.getElementById('newChoreName').value.trim();
+      const mins = parseInt(document.getElementById('newChoreMins').value, 10) || 0;
+      const freq = document.getElementById('newChoreFreq').value;
+      const catSel = document.getElementById('newChoreCatSel').value;
+      const cat = (catSel === '__CUSTOM__') ? document.getElementById('newChoreCustomCat').value.trim() : catSel;
+      if (name.length < 2 || name.length > 10) { showToast('⚠️ 家事名稱請控制在 2～10 個字以內喔！'); return; }
+      if (mins < 1 || mins > 60) { showToast('⚠️ 工時請控制在 1～60 分鐘以內喔！'); return; }
+      if (cat.length < 2 || cat.length > 8) { showToast('⚠️ 分類名稱請控制在 2～8 個字以內喔！'); return; }
+      await callApiAction({ action: 'add_chore', name: name, mins: mins, freq: freq, cat: cat }, true);
+    }
+
+    // 【模組代碼】H-05D｜整批儲存管理者設定（公庫比率、夥伴低消與經驗倍率）｜家庭總控表、成員主檔表
+    async function submitAdminBatchSave() {
+      const taxRate = parseFloat(document.getElementById('admTaxSel').value);
+      const updates = [];
+      const qInputs = document.querySelectorAll('.adm-q');
+      const mInputs = document.querySelectorAll('.adm-m');
+      for (let i = 0; i < qInputs.length; i++) {
+        updates.push({
+          userId: qInputs[i].dataset.uid,
+          quota: parseFloat(qInputs[i].value) || 0,
+          mult: parseFloat(mInputs[i].value) || 1
+        });
+      }
+      await callApiAction({ action: 'admin_batch_save', taxRate: taxRate, updates: updates }, true);
+    }
+
+    // 啟動前端 LIFF 應用程式
+    initLiffApp();
+  </script>
+</body>
+</html>
