@@ -77,15 +77,41 @@
   <script>
     // 【模組代碼】H-00｜定義前端 LIFF 連線網址、LIFF ID 與全域戰情狀態物件｜全表
     const LIFF_ID = '2012618458-DAaG1qzK';
-    const GAS_API_URL = 'https://google.com';
+    const GAS_API_URL = '請在此貼上您真實的GAS_Web_App_exec網址';
     const APP_STATE = {
       groupId: '', userId: '', currentTab: 'energy', isInClient: false,
       data: null, selectedChores: [], useAssassinSkill: false
     };
 
-    // 【模組代碼】H-01｜初始化 LIFF 並透過 localStorage 救回外部瀏覽器登入洗掉的參數｜無
+    // 【模組代碼】H-01｜初始化 LIFF（含動態 SDK 備援載入、localStorage 救回參數與 12 秒防卡死超時）｜無
     async function initLiffApp() {
-      // 【模組代碼】H-01-01｜解析網址參數並於 OAuth 登入前備份至 localStorage｜無
+      // 【模組代碼】H-01-01｜動態確保 window.liff SDK 載入完成（防手機端出現 liff is not defined）｜無
+      const ensureLiffSdkLoaded = function () {
+        return new Promise(function (resolve, reject) {
+          if (typeof window.liff !== 'undefined') return resolve();
+          const sdkUrls = [
+            'https://line-scdn.net',
+            'https://line-scdn.net'
+          ];
+          let idx = 0;
+          const tryNextScript = function () {
+            if (typeof window.liff !== 'undefined') return resolve();
+            if (idx >= sdkUrls.length) return reject(new Error('無法載入 LINE LIFF SDK，請檢查網路連線或關閉廣告阻擋器後重試！'));
+            const s = document.createElement('script');
+            s.src = sdkUrls[idx++];
+            s.charset = 'utf-8';
+            s.onload = function () {
+              if (typeof window.liff !== 'undefined') resolve();
+              else tryNextScript();
+            };
+            s.onerror = tryNextScript;
+            document.head.appendChild(s);
+          };
+          tryNextScript();
+        });
+      };
+
+      // 【模組代碼】H-01-02｜解析網址參數並於 OAuth 登入前備份至 localStorage｜無
       const resolveParamsWithStorage = function () {
         const urlParams = new URLSearchParams(window.location.search);
         let gid = urlParams.get('gid') || '';
@@ -97,35 +123,51 @@
         return { gid: gid, tab: tab };
       };
 
+      // 【模組代碼】H-01-03｜包裝 Promise 加上超時保護（防止電腦版永遠卡在正在連線）｜無
+      const withTimeout = function (promise, ms, errMsg) {
+        return Promise.race([
+          promise,
+          new Promise(function (_, reject) {
+            setTimeout(function () { reject(new Error(errMsg)); }, ms);
+          })
+        ]);
+      };
+
       const saved = resolveParamsWithStorage();
       APP_STATE.groupId = saved.gid;
       APP_STATE.currentTab = saved.tab;
 
       try {
-        await liff.init({ liffId: LIFF_ID });
-        // 判斷是否尚未登入 LINE 帳號（電腦版外部瀏覽器首次開啟必經此處）
+        if (GAS_API_URL.indexOf('https://google.com') !== 0) {
+          throw new Error('尚未設定真實的 GAS_API_URL（Web App /exec 網址）！');
+        }
+        await withTimeout(ensureLiffSdkLoaded(), 10000, '載入 LINE SDK 逾時（超過 10 秒）');
+        await withTimeout(liff.init({ liffId: LIFF_ID }), 10000, 'LIFF 初始化逾時（請確認 LIFF ID 與 Endpoint URL 設定）');
+
         if (!liff.isLoggedIn()) {
           liff.login({ redirectUri: window.location.href });
           return;
         }
-        // 登入完成後清除暫存避免跨群組污染
         localStorage.removeItem('V8_LIFF_GID');
         localStorage.removeItem('V8_LIFF_TAB');
 
         APP_STATE.isInClient = liff.isInClient();
-        // 判斷若非手機 LINE 內建瀏覽器則顯示電腦瀏覽器模式溫馨提示條
         if (!APP_STATE.isInClient) {
           document.getElementById('pcBanner').style.display = 'block';
         }
-        const profile = await liff.getProfile();
+        const profile = await withTimeout(liff.getProfile(), 8000, '取得 LINE 使用者資料逾時');
         APP_STATE.userId = profile.userId;
         if (!APP_STATE.groupId) {
           document.getElementById('appContainer').innerHTML = '<div class="card">⚠️ 缺少群組識別參數，請回到 LINE 群組輸入「選單」並點擊按鈕開啟喔！</div>';
           return;
         }
-        await reloadDashboardData();
+        await withTimeout(reloadDashboardData(), 12000, '讀取家園資料庫逾時，請確認 GAS 已部署為「所有人」可存取！');
       } catch (err) {
-        document.getElementById('appContainer').innerHTML = '<div class="card">⚠️ LIFF 連線異常：' + err.message + '</div>';
+        document.getElementById('appContainer').innerHTML =
+          '<div class="card" style="border-color:#DC2626;background:#FEF2F2;color:#991B1B;">' +
+          '<div style="font-weight:800;margin-bottom:6px;">⚠️ 連線診斷訊息</div>' +
+          '<div style="font-size:14px;margin-bottom:10px;">' + err.message + '</div>' +
+          '<button class="btn btn-red" onclick="location.reload()">🔄 重新整理連線</button></div>';
       }
     }
 
