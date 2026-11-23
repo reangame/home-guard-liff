@@ -82,10 +82,9 @@
       data: null, selectedChores: [], useAssassinSkill: false
     };
 
-
-    // 【模組代碼】H-01｜初始化 LIFF（字串拼接完整載入 SDK、localStorage 救回參數與 12 秒超時保護）｜無
+    // 【模組代碼】H-01｜初始化 LIFF（0.1秒本地快照秒開 ＋ 背景靜默同步 ＋ 雙端參數救回）｜無
     async function initLiffApp() {
-      // 【模組代碼】H-01-01｜動態載入官方 LINE LIFF SDK（採用字串拼接免疫網址路徑被精簡）｜無
+      // 【模組代碼】H-01-01｜動態載入官方 LINE LIFF SDK（字串拼接免疫網址路徑被精簡）｜無
       const ensureLiffSdkLoaded = function () {
         return new Promise(function (resolve, reject) {
           if (typeof window.liff !== 'undefined') return resolve();
@@ -96,7 +95,7 @@
           let idx = 0;
           const tryNextScript = function () {
             if (typeof window.liff !== 'undefined') return resolve();
-            if (idx >= sdkUrls.length) return reject(new Error('無法載入 LINE LIFF SDK，請檢查網路連線或關閉廣告阻擋器後重試！'));
+            if (idx >= sdkUrls.length) return reject(new Error('無法載入 LINE LIFF SDK，請檢查網路連線後重試！'));
             const s = document.createElement('script');
             s.src = sdkUrls[idx++];
             s.charset = 'utf-8';
@@ -123,7 +122,7 @@
         return { gid: gid, tab: tab };
       };
 
-      // 【模組代碼】H-01-03｜包裝 Promise 加上超時保護（防止卡在正在連線）｜無
+      // 【模組代碼】H-01-03｜包裝 Promise 加上超時保護｜無
       const withTimeout = function (promise, ms, errMsg) {
         return Promise.race([
           promise,
@@ -137,12 +136,28 @@
       APP_STATE.groupId = saved.gid;
       APP_STATE.currentTab = saved.tab;
 
+      // 0.1 秒秒開優化：若本地已有該群組上次戰情快照，立即先渲染畫面消除等待感
+      let hasCachedSnap = false;
+      if (APP_STATE.groupId) {
+        try {
+          const rawSnap = localStorage.getItem('V8_LIFF_SNAP_' + APP_STATE.groupId);
+          if (rawSnap) {
+            const parsedSnap = JSON.parse(rawSnap);
+            if (parsedSnap && parsedSnap.ok) {
+              APP_STATE.data = parsedSnap;
+              document.getElementById('navBar').style.display = 'grid';
+              renderTopBar();
+              switchTab(APP_STATE.currentTab);
+              hasCachedSnap = true;
+            }
+          }
+        } catch (e) {}
+      }
+
       try {
-        if (!GAS_API_URL) {
-          throw new Error('尚未設定真實的 GAS_API_URL（請貼上以 /exec 結尾的 GAS Web App 網址）！');
-        }
-        await withTimeout(ensureLiffSdkLoaded(), 10000, '載入 LINE SDK 逾時（超過 10 秒）');
-        await withTimeout(liff.init({ liffId: LIFF_ID }), 10000, 'LIFF 初始化逾時（請確認 LIFF ID 與 Endpoint URL 設定）');
+        if (!GAS_API_URL) throw new Error('尚未設定 GAS_API_URL！');
+        await withTimeout(ensureLiffSdkLoaded(), 10000, '載入 LINE SDK 逾時');
+        await withTimeout(liff.init({ liffId: LIFF_ID }), 10000, 'LIFF 初始化逾時');
 
         if (!liff.isLoggedIn()) {
           liff.login({ redirectUri: window.location.href });
@@ -161,13 +176,15 @@
           document.getElementById('appContainer').innerHTML = '<div class="card">⚠️ 缺少群組識別參數，請回到 LINE 群組輸入「選單」並點擊按鈕開啟喔！</div>';
           return;
         }
-        await withTimeout(reloadDashboardData(), 12000, '讀取家園資料庫逾時，請確認 GAS 已部署為「所有人」可存取！');
+        await withTimeout(reloadDashboardData(), 12000, '讀取家園資料庫逾時');
       } catch (err) {
-        document.getElementById('appContainer').innerHTML =
-          '<div class="card" style="border-color:#DC2626;background:#FEF2F2;color:#991B1B;">' +
-          '<div style="font-weight:800;margin-bottom:6px;">⚠️ 連線診斷訊息</div>' +
-          '<div style="font-size:14px;margin-bottom:10px;">' + err.message + '</div>' +
-          '<button class="btn btn-red" onclick="location.reload()">🔄 重新整理連線</button></div>';
+        if (!hasCachedSnap) {
+          document.getElementById('appContainer').innerHTML =
+            '<div class="card" style="border-color:#DC2626;background:#FEF2F2;color:#991B1B;">' +
+            '<div style="font-weight:800;margin-bottom:6px;">⚠️ 連線診斷訊息</div>' +
+            '<div style="font-size:14px;margin-bottom:10px;">' + err.message + '</div>' +
+            '<button class="btn btn-red" onclick="location.reload()">🔄 重新整理連線</button></div>';
+        }
       }
     }
 
@@ -176,10 +193,23 @@
       const el = document.getElementById('toast');
       el.textContent = msg;
       el.style.display = 'block';
-      setTimeout(function () { el.style.display = 'none'; }, 3200);
+      setTimeout(function () { el.style.display = 'none'; }, 3000);
     }
 
-    // 【模組代碼】H-01C｜呼叫 GAS GET API 重新載入家園與個人完整戰情｜全表
+    // 【模組代碼】H-01C｜套用最新戰情快照（同步更新本地快取與畫面）｜全表
+    function applyDashboardSnapshot(snapJson) {
+      if (!snapJson || !snapJson.ok) return false;
+      APP_STATE.data = snapJson;
+      if (APP_STATE.groupId) {
+        try { localStorage.setItem('V8_LIFF_SNAP_' + APP_STATE.groupId, JSON.stringify(snapJson)); } catch (e) {}
+      }
+      document.getElementById('navBar').style.display = 'grid';
+      renderTopBar();
+      switchTab(APP_STATE.currentTab);
+      return true;
+    }
+
+    // 【模組代碼】H-01D｜呼叫 GAS GET API 重新載入家園與個人完整戰情｜全表
     async function reloadDashboardData() {
       const url = GAS_API_URL + '?api=1&groupId=' + encodeURIComponent(APP_STATE.groupId) + '&userId=' + encodeURIComponent(APP_STATE.userId);
       const res = await fetch(url);
@@ -188,10 +218,7 @@
         document.getElementById('appContainer').innerHTML = '<div class="card">⚠️ ' + (json.msg || '讀取資料失敗') + '</div>';
         return;
       }
-      APP_STATE.data = json;
-      document.getElementById('navBar').style.display = 'grid';
-      renderTopBar();
-      switchTab(APP_STATE.currentTab);
+      applyDashboardSnapshot(json);
     }
 
     // 【模組代碼】H-02｜渲染頂部上下兩行家園與角色狀態列（手機窄螢幕防擠壓排版）｜家庭總控表、成員主檔表
@@ -223,9 +250,10 @@
         '<div class="stat-box"><div class="stat-label">🪙 金幣</div><div class="stat-val" style="color:#B45309;">' + (st.coins || 0) + '</div></div>';
     }
 
-    // 【模組代碼】H-02B｜統一呼叫 GAS POST API 並處理力竭與隨時冷卻/上限彈窗確認｜全表
+    // 【模組代碼】H-02B｜統一呼叫 GAS POST API（接收單趟 snapshot 立即重繪，省去第二次 GET 延遲）｜全表
     async function callLiffPostApi(payloadObj, btnEl) {
       if (btnEl) btnEl.disabled = true;
+      showToast('⏳ 處理中...');
       try {
         const body = Object.assign({ groupId: APP_STATE.groupId, userId: APP_STATE.userId }, payloadObj);
         const res = await fetch(GAS_API_URL + '?api=1', {
@@ -253,6 +281,10 @@
           } else {
             showToast('✅ 已更新資料庫！（電腦瀏覽器模式不代發群組戰報）');
           }
+        }
+        // 直接套用 POST 單趟帶回的最新快照，無需再等第二次 GET
+        if (json.snapshot && applyDashboardSnapshot(json.snapshot)) {
+          return json;
         }
         await reloadDashboardData();
         return json;
