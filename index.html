@@ -74,13 +74,14 @@
   </nav>
 
   <script>
-    // 【模組代碼】H-00｜定義前端 LIFF 連線網址、LIFF ID 與全域戰情狀態物件｜全表
+    // 【模組代碼】H-00｜定義前端 LIFF 連線網址（單一變數集中管理、字串拼接防截斷）、LIFF ID 與全域戰情狀態物件｜全表
     const LIFF_ID = '2012618458-DAaG1qzK';
-    const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbzlgsrUiXETYPgZVZqbRs7bfZv9EP2GiIssH8-5M9BUu69QPAiz4QwUWTb9v-kx2mWP/exec';
+    const GAS_API_URL = 'https://' + 'script.google.com' + '/macros/s/AKfycbzlgsrUiXETYPgZVZqbRs7bfZv9EP2GiIssH8-5M9BUu69QPAiz4QwUWTb9v-kx2mWP/exec';
     const APP_STATE = {
       groupId: '', userId: '', currentTab: 'energy', isInClient: false,
       data: null, selectedChores: [], useAssassinSkill: false
     };
+
 
     // 【模組代碼】H-01｜初始化 LIFF（字串拼接完整載入 SDK、localStorage 救回參數與 12 秒超時保護）｜無
     async function initLiffApp() {
@@ -137,7 +138,7 @@
       APP_STATE.currentTab = saved.tab;
 
       try {
-        if (GAS_API_URL.indexOf('https://' + '://google.com') !== 0) {
+        if (!GAS_API_URL) {
           throw new Error('尚未設定真實的 GAS_API_URL（請貼上以 /exec 結尾的 GAS Web App 網址）！');
         }
         await withTimeout(ensureLiffSdkLoaded(), 10000, '載入 LINE SDK 逾時（超過 10 秒）');
