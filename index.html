@@ -402,7 +402,7 @@
       }, btnEl);
     }
 
-    // 【模組代碼】H-03｜渲染「🎒 背包與角色」頁籤（含小瓶紅藍藥水幾何圖示、穿脫裝備、轉職大招與商店）｜成員主檔表、全服商店貨架表
+    // 【模組代碼】H-03｜渲染「🎒 背包與角色」頁籤（含小瓶紅藍藥水幾何圖示、商店數量微調/手動輸入與批量購買）｜成員主檔表、全服商店貨架表
     function renderBagAndCharacterTab() {
       const mem = APP_STATE.data.member;
       const st = mem.status || {};
@@ -415,6 +415,7 @@
       const jobsCatalog = APP_STATE.data.jobsCatalog || [];
       const shelfList = APP_STATE.data.shopShelf || [];
 
+      // 【模組代碼】H-03-01｜產生純 CSS 小瓶紅色治癒試管、藍色魔力試管或對應 Emoji 圖示 HTML｜無
       const renderItemVisualHtml = function (item) {
         const n = String((item && item.name) || '');
         if (item && item.type === 'consumable') {
@@ -442,6 +443,7 @@
         return '<div class="icon-box" style="font-size:24px;">🌿</div>';
       };
 
+      // 【模組代碼】H-03-02｜組裝隨身物品與正式背包 3 欄網格格子 HTML｜無
       const buildBagGridHtml = function () {
         const cells = [];
         for (let i = 0; i < maxSlots; i++) {
@@ -460,6 +462,7 @@
         return '<div class="bag-grid">' + cells.join('') + '</div>';
       };
 
+      // 【模組代碼】H-03-03｜組裝職業轉職選單或職業專屬奧義大招卡片 HTML｜無
       const buildJobSectionHtml = function () {
         const curJob = st.job || '見習守護者';
         if (lv >= 10 && curJob === '見習守護者') {
@@ -481,16 +484,23 @@
           '<button class="btn btn-amber" onclick="callLiffPostApi({action:\'cast_skill\'},this)">🔥 立即發動奧義大招</button></div>';
       };
 
+      // 【模組代碼】H-03-04｜組裝金幣補給商店 3 欄貨架 HTML（第1列品名、第2列 －/手動輸入/＋、第3列動態總價按鈕）｜全服商店貨架表
       const buildShopHtml = function () {
         const cards = shelfList.map(function (s) {
           const mockItem = { type: 'consumable', name: s.displayName };
-          return '<div style="border:1.5px solid #0D9488;border-radius:10px;padding:8px;text-align:center;background:#F0FDFA;">' +
+          return '<div style="border:1.5px solid #0D9488;border-radius:10px;padding:8px 6px;text-align:center;background:#F0FDFA;">' +
             renderItemVisualHtml(mockItem) +
-            '<div style="font-size:13px;font-weight:800;margin-top:4px;">' + s.displayName + '</div>' +
-            '<button class="btn btn-teal btn-sm" style="margin-top:6px;width:100%;" onclick="callLiffPostApi({action:\'buy_item\',shelfId:\'' + s.shelfId + '\'},this)">🪙 ' + s.price + ' 金</button></div>';
+            '<div style="font-size:13px;font-weight:800;margin-top:4px;color:#0F172A;">' + s.displayName + '</div>' +
+            '<div style="display:flex;align-items:center;justify-content:center;gap:3px;margin-top:6px;">' +
+              '<button type="button" onclick="adjustShopQty(\'' + s.shelfId + '\',' + s.price + ',-1)" style="width:24px;height:26px;border:1px solid #94A3B8;border-radius:6px;background:#FFFFFF;font-weight:800;font-size:15px;color:#0F172A;cursor:pointer;">－</button>' +
+              '<input id="qty_' + s.shelfId + '" type="number" inputmode="numeric" min="1" max="99" value="1" oninput="syncShopTotal(\'' + s.shelfId + '\',' + s.price + ',false)" onblur="syncShopTotal(\'' + s.shelfId + '\',' + s.price + ',true)" style="width:36px;height:26px;text-align:center;border:1px solid #0D9488;border-radius:6px;font-size:13px;font-weight:800;color:#0F172A;background:#FFFFFF;padding:0;" />' +
+              '<button type="button" onclick="adjustShopQty(\'' + s.shelfId + '\',' + s.price + ',1)" style="width:24px;height:26px;border:1px solid #94A3B8;border-radius:6px;background:#FFFFFF;font-weight:800;font-size:15px;color:#0F172A;cursor:pointer;">＋</button>' +
+            '</div>' +
+            '<button id="buyBtn_' + s.shelfId + '" class="btn btn-teal btn-sm" style="margin-top:6px;width:100%;" onclick="buyShopShelfBatch(\'' + s.shelfId + '\',this)">🪙 ' + s.price + ' 金</button>' +
+          '</div>';
         }).join('');
         return '<div class="card"><div class="card-title"><span>🏪 家園金幣補給商店</span><span style="font-size:12px;color:#059669;">持有 ' + (st.coins || 0) + ' 金</span></div>' +
-          '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">' + cards + '</div></div>';
+          '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">' + cards + '</div></div>';
       };
 
       const eqKeys = Object.keys(equipped);
@@ -524,6 +534,36 @@
         buildShopHtml() +
         '<div class="card"><div class="card-title">🌿 個人休假狀態</div>' + leaveBtnHtml + '</div>';
     }
+
+    // 【模組代碼】H-03-05｜點擊商店貨架 － 或 ＋ 按鈕調整購買數量並同步總金額｜無
+function adjustShopQty(shelfId, unitPrice, delta) {
+const inputEl = document.getElementById('qty_' + shelfId);
+if (!inputEl) return;
+const curVal = parseInt(inputEl.value, 10) || 1;
+inputEl.value = Math.min(99, Math.max(1, curVal + delta));
+syncShopTotal(shelfId, unitPrice, true);
+}
+// 【模組代碼】H-03-06｜手動輸入商店數量時即時重算第 3 列購買按鈕總金額｜無
+function syncShopTotal(shelfId, unitPrice, clampInput) {
+const inputEl = document.getElementById('qty_' + shelfId);
+const btnEl = document.getElementById('buyBtn_' + shelfId);
+if (!inputEl || !btnEl) return;
+let raw = parseInt(inputEl.value, 10);
+if (isNaN(raw)) {
+if (clampInput) { raw = 1; inputEl.value = 1; }
+else { btnEl.textContent = '🪙 ' + unitPrice + ' 金'; return; }
+}
+const clamped = Math.min(99, Math.max(1, raw));
+if (clampInput) inputEl.value = clamped;
+btnEl.textContent = '🪙 ' + (unitPrice * clamped) + ' 金';
+}
+// 【模組代碼】H-03-07｜讀取商店數量輸入框並送出批量購買請求｜全服商店貨架表、成員主檔表
+async function buyShopShelfBatch(shelfId, btnEl) {
+const inputEl = document.getElementById('qty_' + shelfId);
+const qty = inputEl ? Math.min(99, Math.max(1, parseInt(inputEl.value, 10) || 1)) : 1;
+if (inputEl) inputEl.value = qty;
+await callLiffPostApi({ action: 'buy_item', shelfId: shelfId, qty: qty }, btnEl);
+}
 
     // 【模組代碼】H-03B｜點擊隨身物品／背包格子觸發飲用道具、穿戴裝備或檢視用途｜成員主檔表
     async function onClickBagSlot(idx) {
