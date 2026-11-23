@@ -223,7 +223,7 @@
         '<div class="stat-box"><div class="stat-label">🪙 金幣</div><div class="stat-val" style="color:#B45309;">' + (st.coins || 0) + '</div></div>';
     }
 
-    // 【模組代碼】H-02B｜統一呼叫 GAS POST API 並處理群組免費 replyToken 宣言派發｜全表
+    // 【模組代碼】H-02B｜統一呼叫 GAS POST API 並處理力竭與隨時冷卻/上限彈窗確認｜全表
     async function callLiffPostApi(payloadObj, btnEl) {
       if (btnEl) btnEl.disabled = true;
       try {
@@ -237,6 +237,9 @@
         if (!json.ok) {
           if (json.needExhaustedConfirm && confirm(json.msg)) {
             return await callLiffPostApi(Object.assign({}, payloadObj, { forceExhausted: true }), btnEl);
+          }
+          if (json.needAnytimeConfirm && confirm(json.msg)) {
+            return await callLiffPostApi(Object.assign({}, payloadObj, { forceAnytimePure: true }), btnEl);
           }
           showToast('⚠️ ' + (json.msg || '操作未完成'));
           return json;
@@ -264,9 +267,12 @@
     // 【模組代碼】H-02C｜切換底部六大功能頁籤並渲染對應畫面｜無
     function switchTab(tabName) {
       APP_STATE.currentTab = tabName;
-      document.querySelectorAll('.nav-item').forEach(function (btn) {
-        btn.classList.toggle('active', btn.getAttribute('data-tab') === tabName);
-      });
+      document.querySelectorAll('.nav-item').forEach(
+        // 【模組代碼】H-02C-01｜切換導覽列按鈕高亮狀態｜無
+        function (btn) {
+          btn.classList.toggle('active', btn.getAttribute('data-tab') === tabName);
+        }
+      );
       if (tabName === 'energy') renderEnergyTab();
       else if (tabName === 'bag') renderBagAndCharacterTab();
       else if (tabName === 'backdate') renderBackdateTab();
@@ -275,7 +281,7 @@
       else if (tabName === 'admin') renderAdminTab();
     }
 
-    // 【模組代碼】H-02D｜渲染「⚡ 注入能量」多選家事合併打卡與職業大招介面｜家事百科表、成員主檔表
+    // 【模組代碼】H-02D｜渲染「⚡ 注入能量」多選家事合併打卡介面（含隨時家事冷卻倒數與額度標示）｜家事百科表、成員主檔表
     function renderEnergyTab() {
       const chores = APP_STATE.data.chores || [];
       const mem = APP_STATE.data.member;
@@ -284,7 +290,10 @@
       const isAssassin = ((st.job || '').indexOf('刺客') !== -1);
       const todayStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
       const usedAny = (st.anytime_date === todayStr) ? (st.anytime_count || 0) : 0;
+      const cdMap = st.anytime_cooldowns || {};
+      const nowMs = Date.now();
 
+      // 【模組代碼】H-02D-01｜依分類分組組裝可勾選家事清單（標示隨時冷卻剩餘分鐘）｜無
       const buildChoresHtml = function () {
         const cats = {};
         chores.forEach(function (c) {
@@ -296,10 +305,26 @@
           const rows = cats[cat].map(function (c) {
             const isDone = (c.freq !== '隨時' && c.status === '已完成');
             const isSel = (APP_STATE.selectedChores.indexOf(c.name) !== -1);
-            const tag = isDone ? '✅ 已守護' : (c.freq === '隨時' ? '✨ 隨時' : '🔸 ' + c.freq);
+            let tag = isDone ? '✅ 已守護' : ('🔸 ' + c.freq);
+            let tagColor = '#64748B';
+            if (!isDone && c.freq === '隨時') {
+              const lastCd = Number(cdMap[c.name] || 0);
+              const diffMs = nowMs - lastCd;
+              if (lastCd > 0 && diffMs < 3600000) {
+                const leftMins = Math.ceil((3600000 - diffMs) / 60000);
+                tag = '⏳ 冷卻中（剩 ' + leftMins + ' 分・純計工時）';
+                tagColor = '#D97706';
+              } else if (usedAny >= 5) {
+                tag = '⚠️ 今日掉寶已滿 5/5（純計工時）';
+                tagColor = '#D97706';
+              } else {
+                tag = '✨ 隨時（可打怪掉寶）';
+                tagColor = '#059669';
+              }
+            }
             const safeName = c.name.replace(/'/g, "\\'");
             return '<div class="chore-row ' + (isDone ? 'done' : (isSel ? 'selected' : '')) + '" onclick="' + (isDone ? '' : "toggleChoreSelect('" + safeName + "')") + '">' +
-              '<div><strong>' + (isSel ? '☑️ ' : (isDone ? '✅ ' : '⬜ ')) + c.name + '</strong><div style="font-size:12px;color:#64748B;">' + tag + '</div></div>' +
+              '<div><strong>' + (isSel ? '☑️ ' : (isDone ? '✅ ' : '⬜ ')) + c.name + '</strong><div style="font-size:12px;color:' + tagColor + ';font-weight:700;">' + tag + '</div></div>' +
               '<div style="font-weight:800;color:#0F766E;">+' + c.mins + ' 分</div></div>';
           }).join('');
           return '<div class="card"><div class="card-title"><span>🏷️ ' + cat + '</span></div>' + rows + '</div>';
